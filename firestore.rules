@@ -3,10 +3,10 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // -------------------------------------------------------------------------
-    // [PHASE R1] 초정밀 보안 Helper 함수 레이어 (최종 보완 및 최적화)
+    // [PHASE R1] 초정밀 보안 Helper 함수 레이어 (SSOT 최종 보완)
     // -------------------------------------------------------------------------
 
-    // 0. 사용자 문서 데이터 조회 (중복 호출 방지 및 가독성 개선)
+    // 0. 사용자 문서 데이터 조회 (중복 호출 방지)
     function currentUserDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
@@ -16,20 +16,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // 2. 사용자 문서 존재 확인 (보안 강화)
+    // 2. 사용자 문서 존재 확인 (보조 헬퍼)
     function currentUserExists() {
       return isSignedIn() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
     // 3. 계정 활성화 상태 확인 (Zero Trust 핵심)
-    // - 최적화: currentUserExists() 및 currentUserDoc() 조합으로 정합성 보장
     function isActiveUser() {
       return currentUserExists() && 
              currentUserDoc().data.isActive == true;
     }
 
-    // 4. 특정 역할 보유 여부 확인 (보완: 반드시 활성 사용자 전제)
+    // 4. 특정 역할 보유 여부 확인 (활성 사용자 전제)
     function hasRole(role) {
       return isActiveUser() && currentUserDoc().data.role == role;
     }
@@ -39,89 +38,95 @@ service cloud.firestore {
       return hasRole('ADMIN') || hasRole('SUPER_ADMIN');
     }
 
-    // 6. 문서 소유자 여부 확인
+    // 6. 팀장 레벨 이상 권한 확인 (LEADER, ADMIN, SUPER_ADMIN)
+    function isLeaderLevel() {
+      return hasRole('LEADER') || isAdminLevel();
+    }
+
+    // 7. 문서 소유자 여부 확인
     function isSelfDocumentUser(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // 7. 필드 화이트리스트 제어 (신규 생성 시 허용된 키만 포함)
+    // 8. 필드 화이트리스트 제어 (신규 생성 시 허용된 키만 포함)
     function hasOnlyKeys(allowedKeys) {
       return request.resource.data.keys().hasOnly(allowedKeys);
     }
 
-    // 8. 특정 필드들만 변경되었는지 확인 (Update 시 화이트리스트 제어)
+    // 9. 특정 필드들만 변경되었는지 확인 (Update 시 화이트리스트 제어)
     function changedOnly(allowedKeys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
     }
 
-    // 9. 특정 필드들이 변경되지 않았음을 보장 (보안/상태 필드 보호)
+    // 10. 특정 필드들이 변경되지 않았음을 보장 (보안/상태 필드 보호)
     function isNotUpdating(forbiddenKeys) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(forbiddenKeys);
     }
 
     // -------------------------------------------------------------------------
-    // [PHASE R2] 컬렉션별 정밀 권한 및 상태 보호 규칙 (최전방 봉쇄)
+    // [PHASE R2] 컬렉션별 정밀 권한 및 상태 보호 규칙 (최종 보완본)
     // -------------------------------------------------------------------------
 
     // 1. 사용자 컬렉션
     match /users/{userId} {
-      allow get: if isSelfDocumentUser(userId) || isAdminLevel();
-      allow list: if isAdminLevel();
+      allow get: if isSelfDocumentUser(userId) || isLeaderLevel(); // 리더는 팀원 조회 가능성 고려 상향
+      allow list: if isLeaderLevel();
       allow create: if isAdminLevel();
       allow update: if (isAdminLevel() && isNotUpdating(['createdAt'])) 
                     || (isActiveUser() && isSelfDocumentUser(userId) 
                         && changedOnly(['displayName', 'phone', 'profileImageUrl', 'emergencyContact', 'updatedAt']));
-      allow delete: if false; // Soft delete 원칙 고수
+      allow delete: if false; 
     }
 
-    // 2. 사업분야 및 메뉴얼 (조회: 공통, 관리: 어드민)
+    // 2. 사업분야 및 메뉴얼
     match /business_categories/{id} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser();
       allow write: if isAdminLevel();
     }
     match /business_subcategories/{id} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser();
       allow write: if isAdminLevel();
     }
     match /manuals/{id} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser();
       allow write: if isAdminLevel();
     }
 
-    // 3. 일정 관리 (Zero Trust: 읽기만 허용, 쓰기는 Functions 전용)
+    // 3. 일정 관리 (Zero Trust: 모든 쓰기는 Functions 전용)
     match /schedules/{scheduleId} {
-      allow read: if isAdminLevel() || (isActiveUser() && (request.auth.uid in resource.data.workerIds));
-      allow write: if false; // 모든 상태 변경은 서버 함수에서만 처리하여 무결성 보장
+      allow read: if isLeaderLevel() || (isActiveUser() && (request.auth.uid in resource.data.workerIds));
+      allow write: if false; 
     }
 
-    // 4. 작업자 상태 문서 (사원 시작/종료 입력 허용)
+    // 4. 작업자 상태 문서 (보안 상향: isActiveUser 기반)
     match /schedule_workers/{workerId} {
-      allow read: if isAdminLevel() || (isSignedIn() && isSelfDocumentUser(resource.data.workerId));
+      allow read: if isLeaderLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.workerId));
       allow create: if isAdminLevel();
       allow update: if isAdminLevel() 
                     || (isActiveUser() && isSelfDocumentUser(resource.data.workerId)
                         && changedOnly(['actualStartAt', 'actualEndAt', 'updatedAt']));
     }
 
-    // 5. 현장 마감 기록 및 사진 (필드 단위 화이트리스트 적용)
+    // 5. 현장 마감 기록 및 사진 (생성 필드 엄격 봉쇄)
     match /schedule_closings/{closingId} {
-      allow read: if isAdminLevel() || (isSignedIn() && isSelfDocumentUser(resource.data.workerId));
+      allow read: if isLeaderLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.workerId));
+      // 보완: status, submittedAt, photoCount 등은 클라이언트 생성 시 포함 불가 (서버 전용)
       allow create: if isActiveUser() && isSelfDocumentUser(request.resource.data.workerId)
-                    && hasOnlyKeys(['scheduleId', 'workerId', 'startAt', 'endAt', 'notes', 'submittedAt', 'status', 'beforePhotoCount', 'afterPhotoCount', 'createdAt', 'updatedAt']);
-      allow update: if isAdminLevel(); // 관리자 리뷰 및 승인용
+                    && hasOnlyKeys(['scheduleId', 'workerId', 'startAt', 'endAt', 'notes', 'createdAt', 'updatedAt']);
+      allow update: if isAdminLevel(); 
     }
 
     match /schedule_photos/{photoId} {
-      allow read: if isSignedIn(); 
+      allow read: if isActiveUser(); 
       allow create: if isActiveUser() && isSelfDocumentUser(request.resource.data.uploaderId)
                     && hasOnlyKeys(['scheduleId', 'uploaderId', 'photoType', 'title', 'storagePath', 'fileName', 'fileSize', 'uploadedAt', 'createdAt']);
       allow update: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.uploaderId) && changedOnly(['title', 'updatedAt']));
       allow delete: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.uploaderId));
     }
 
-    // 6. 장비 및 NFC (상태 변경 필드는 Functions 전용으로 엄격 보호)
+    // 6. 장비 및 NFC (규칙 분리 및 보호 강화)
     match /equipments/{equipmentId} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser();
       allow create: if isAdminLevel();
       allow update: if isAdminLevel() 
                     && isNotUpdating(['status', 'currentHolderUserId', 'currentHolderName', 'lastCheckoutAt', 'lastCheckinAt']);
@@ -129,33 +134,33 @@ service cloud.firestore {
     }
 
     match /nfc_tag_mappings/{id} {
-      allow read: if isAdminLevel();
+      allow read: if isLeaderLevel();
       allow write: if isAdminLevel();
     }
 
-    // 7. 시스템 로그 (Append-only: 클라이언트 수정/삭제 절대 금지)
+    // 7. 시스템 로그 (Append-only)
     match /audit_logs/{id} {
       allow read: if isAdminLevel();
       allow write: if false;
     }
 
     match /equipment_logs/{id} {
-      allow read: if isAdminLevel() || (isSignedIn() && isSelfDocumentUser(resource.data.actorUserId));
+      allow read: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.actorUserId));
       allow write: if false;
     }
 
-    // 8. 기타 설정 및 정기청소
+    // 8. 기타 설정 및 정기청소 (보안 상향)
     match /regular_cleaning_sites/{id} {
-      allow read: if isSignedIn();
+      allow read: if isActiveUser();
       allow write: if isAdminLevel();
     }
     match /regular_cleaning_attendance/{id} {
-      allow read: if isAdminLevel() || (isSignedIn() && isSelfDocumentUser(resource.data.workerId));
+      allow read: if isLeaderLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.workerId));
       allow create: if isAdminLevel();
       allow update: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.workerId) && changedOnly(['startAt', 'endAt', 'updatedAt']));
     }
 
-    // 기본 방어: 정의되지 않은 모든 경로는 차단 (Secure by Default)
+    // 기본 방어
     match /{path=**} {
       allow read, write: if false;
     }
