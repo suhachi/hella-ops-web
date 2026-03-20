@@ -13,6 +13,9 @@ export const ErrorUtils = {
   invalidInput(message = "입력 데이터가 유효하지 않습니다.") {
     return new functions.https.HttpsError("invalid-argument", message);
   },
+  forbidden(message = "권한이 없습니다.") {
+    return new functions.https.HttpsError("permission-denied", message);
+  },
   internal(message = "내부 서버 오류가 발생했습니다.") {
     return new functions.https.HttpsError("internal", message);
   }
