@@ -44,20 +44,27 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
   protected async performLookup(
     transaction: admin.firestore.Transaction,
     data: ReviewClosingInput
-  ): Promise<{ workerDoc: any; allWorkers: any[] }> {
+  ): Promise<{ workerDoc: any; allWorkers: any[]; closingDoc: any }> {
     const closingId = `${data.scheduleId}_${data.workerId}`;
     const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
+    const closingRef = FirestoreUtils.db.collection("schedule_closings").doc(closingId);
+    const scheduleRef = FirestoreUtils.schedule(data.scheduleId);
     const scheduleWorkersRef = FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId);
     
-    const [workerSnap, allWorkersSnap] = await Promise.all([
+    const [workerSnap, closingSnap, scheduleSnap, allWorkersSnap] = await Promise.all([
       transaction.get(workerRef),
+      transaction.get(closingRef),
+      transaction.get(scheduleRef),
       transaction.get(scheduleWorkersRef)
     ]);
 
-    if (!workerSnap.exists) throw ErrorUtils.notFound("해당 마감 배정 내역을 찾을 수 없습니다.");
+    if (!closingSnap.exists) throw ErrorUtils.notFound("해당 마감 제출 문서를 찾을 수 없습니다.");
+    if (!workerSnap.exists) throw ErrorUtils.notFound("관련 배정 내역을 찾을 수 없습니다.");
+    if (!scheduleSnap.exists) throw ErrorUtils.notFound("상위 일정 정보를 찾을 수 없습니다.");
     
     return { 
       workerDoc: workerSnap.data(),
+      closingDoc: closingSnap.data(),
       allWorkers: allWorkersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
     };
   }

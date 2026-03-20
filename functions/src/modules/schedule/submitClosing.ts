@@ -92,16 +92,27 @@ export class SubmitClosingHandler extends BaseHandler<SubmitClosingInput, { succ
     const scheduleId = data.scheduleId;
     const now = TimestampUtils.now();
 
-    // 1. HARD BLOCK 검증 (업로드 오류 건 존재 시 전적 제출 차단)
-    if (data.hasUploadError === true) {
-       throw ErrorUtils.invalidInput("사진 업로드 실패 건이 존재하여 마감을 완료할 수 없습니다. (HARD BLOCK)");
+    // 1. HARD BLOCK 검증 (Zero Trust: 서버 독립 검증)
+    // schedule_photos 컬렉션에서 해당 작업자의 본 일정 관련 사진 중 성공하지 않은 건이 있는지 전수 조사
+    const photosSnap = await FirestoreUtils.db.collection("schedule_photos")
+      .where("scheduleId", "==", scheduleId)
+      .where("workerId", "==", workerId)
+      .get();
+    
+    const hasIncompletePhotos = photosSnap.docs.some(doc => {
+      const p = doc.data();
+      return p.status !== "SUCCESS"; // PENDING, FAILED 등 차단
+    });
+
+    if (hasIncompletePhotos) {
+       throw ErrorUtils.invalidInput("서버 확인 결과, 아직 완료되지 않은 사진 업로드 건이 존재합니다. (HARD BLOCK)");
     }
 
     const closingId = `${scheduleId}_${workerId}`;
     const closingRef = FirestoreUtils.db.collection("schedule_closings").doc(closingId);
     const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
 
-    // 2. 전용 컬렉션(schedule_closings)에 마감 전문 저장
+    // 2. 전용 컬렉션 저장 및 관리 데이터 연동
     transaction.set(closingRef, {
       scheduleId,
       workerId,
@@ -114,10 +125,9 @@ export class SubmitClosingHandler extends BaseHandler<SubmitClosingInput, { succ
       updatedAt: now
     });
 
-    // 3. 작업자 상태 업데이트 및 링크 연동
     transaction.update(workerRef, {
       workStatus: "SUBMITTED",
-      closingId: closingId, // 관계 링크
+      closingId: closingId,
       updatedAt: now
     });
 
