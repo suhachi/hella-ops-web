@@ -48,14 +48,29 @@ export class RecordWorkStartHandler extends BaseHandler<RecordWorkStartInput, { 
       transaction.get(FirestoreUtils.schedule(data.scheduleId))
     ]);
 
+    // 1. 필수 존재 검증 (exists)
+    if (!workerSnap.exists) {
+      throw ErrorUtils.notFound("본인에게 배정된 일정 정보를 찾을 수 없습니다.");
+    }
+    if (!scheduleSnap.exists) {
+      throw ErrorUtils.notFound("상위 일정 정보가 존재하지 않습니다.");
+    }
+
+    // 2. 사원 활성 상태 검증
     const userData = userSnap.data() as any;
     if (!userSnap.exists || userData?.isActive !== true) {
       throw ErrorUtils.forbidden("비활성 계정은 업무를 시작할 수 없습니다.");
     }
 
+    // 3. 상위 일정 상태 가드 (CANCELLED, COMPLETED 차단)
+    const scheduleData = scheduleSnap.data();
+    if (scheduleData?.status === "CANCELLED" || scheduleData?.status === "COMPLETED") {
+      throw ErrorUtils.invalidState(`이미 ${scheduleData.status === "CANCELLED" ? "취소" : "완료"}된 일정입니다. 업무를 시작할 수 없습니다.`);
+    }
+
     return { 
       workerDoc: workerSnap.data(),
-      scheduleDoc: scheduleSnap.data()
+      scheduleDoc: scheduleData
     };
   }
 

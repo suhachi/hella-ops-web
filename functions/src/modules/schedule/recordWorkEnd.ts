@@ -39,12 +39,19 @@ export class RecordWorkEndHandler extends BaseHandler<RecordWorkEndInput, { succ
     const workerDocId = `${data.scheduleId}_${workerId}`;
     const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(workerDocId);
     
-    const [workerSnap, allWorkersSnap] = await Promise.all([
+    const [workerSnap, allWorkersSnap, scheduleSnap] = await Promise.all([
       transaction.get(workerRef),
-      transaction.get(FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId))
+      transaction.get(FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId)),
+      transaction.get(FirestoreUtils.schedule(data.scheduleId))
     ]);
 
     if (!workerSnap.exists) throw ErrorUtils.notFound("배정 정보를 찾을 수 없습니다.");
+    if (!scheduleSnap.exists) throw ErrorUtils.notFound("일정 정보를 찾을 수 없습니다.");
+
+    const scheduleData = scheduleSnap.data();
+    if (scheduleData?.status === "CANCELLED") {
+      throw ErrorUtils.invalidState("이미 취소된 일정은 종료 처리를 할 수 없습니다.");
+    }
 
     return { 
       workerDoc: workerSnap.data(),
