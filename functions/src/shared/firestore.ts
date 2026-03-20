@@ -1,0 +1,21 @@
+import * as admin from "firebase-admin";
+
+/**
+ * Firestore 접근 래퍼 및 경로 유틸
+ */
+export const FirestoreUtils = {
+  db: admin.firestore(),
+  
+  user(uid: string) {
+    return this.db.collection("users").doc(uid);
+  },
+  schedule(id: string) {
+    return this.db.collection("schedules").doc(id);
+  },
+  scheduleWorker(id: string) {
+    return this.db.collection("schedule_workers").doc(id);
+  },
+  equipment(id: string) {
+    return this.db.collection("equipments").doc(id);
+  }
+};
