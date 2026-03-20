@@ -27,3 +27,7 @@ export * from "./modules/schedule/cancelSchedule";
 // Module Exports: Execution (F2)
 export * from "./modules/schedule/recordWorkStart";
 export * from "./modules/schedule/recordWorkEnd";
+
+// Module Exports: Closing (F3)
+export * from "./modules/schedule/submitClosing";
+export * from "./modules/schedule/reviewClosing";
