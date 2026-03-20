@@ -79,7 +79,8 @@ export class SubmitClosingHandler extends BaseHandler<SubmitClosingInput, { succ
 
     photosSnap.docs.forEach(doc => {
       const p = doc.data() as any;
-      if (p.status !== "SUCCESS") hasIncomplete = true;
+      // 6차 보완: uploadStatus 필드명 일원화
+      if (p.uploadStatus !== "SUCCESS") hasIncomplete = true;
       if (!p.storagePath || !p.fileName || !p.fileSize || !p.uploadedAt) hasMissingMeta = true;
       
       const photoUrl = p.storagePath; // 저장될 경로 데이터
@@ -100,9 +101,9 @@ export class SubmitClosingHandler extends BaseHandler<SubmitClosingInput, { succ
     const scheduleStatus = docs.scheduleDoc.status;
     const pv = docs.photoValidation;
 
-    // A. 작업자 상태 가드 (SSOT 표준 범위 내 판정)
-    if (!["STARTED", "ENDED", "CLOSED"].includes(workerStatus)) {
-       throw ErrorUtils.invalidState(`마감 제출 가능 상태가 아닙니다. (현재: ${workerStatus})`);
+    // A. 작업자 상태 가드 (6차 보완: ENDED 상태에서만 마감 제출 가능하도록 엄격히 제한)
+    if (workerStatus !== "ENDED") {
+       throw ErrorUtils.invalidState(`마감 제출은 작업 종료(ENDED) 기록 후 가능합니다. (현재 상태: ${workerStatus})`);
     }
 
     // B. 상위 일정 상태 가드
