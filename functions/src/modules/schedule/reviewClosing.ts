@@ -75,7 +75,6 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
 
   // 5. 상태 전이 고차 검증
   protected validateTransition(docs: any): void {
-    const workStatus = docs.workerDoc.workStatus;
     const closingStatus = docs.closingDoc.status;
 
     // A. 중복 처리 차단 가드
@@ -83,9 +82,9 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
       throw ErrorUtils.invalidState(`이미 검토가 완료된 마감 건입니다. (현재: ${closingStatus})`);
     }
 
-    // B. 주 상태 정합성 확인
-    if (workStatus !== "SUBMITTED") {
-      throw ErrorUtils.invalidState(`검토 가능한 제출 상태가 아닙니다. (현재: ${workStatus})`);
+    // B. 마감 문서 상태 기반 판정 (5차 보완: 작업자 상태가 아닌 마감 상태 체크)
+    if (closingStatus !== "SUBMITTED") {
+      throw ErrorUtils.invalidState(`검토 가능한 제출 상태가 아닙니다. (현재 마감상태: ${closingStatus})`);
     }
   }
 
@@ -101,20 +100,21 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     const now = TimestampUtils.now();
 
     const isApprove = data.action === "APPROVE";
-    const targetStatus = isApprove ? "APPROVED" : "REJECTED";
-    const targetWorkStatus = isApprove ? "CLOSED" : "REJECTED";
+    const targetClosingStatus = isApprove ? "APPROVED" : "REJECTED";
+    // 5차 보완: 작업자 상태는 승인 시에만 CLOSED로, 반려 시에는 ENDED(수정 가능) 유지
+    const targetWorkerStatus = isApprove ? "CLOSED" : "ENDED";
 
     // 1. 마감 전문 상태 및 검토 정보 서버 확정
     transaction.update(closingRef, {
-      status: targetStatus,
+      status: targetClosingStatus,
       rejectReason: isApprove ? null : data.reason,
       reviewedAt: now,
       updatedAt: now
     });
 
-    // 2. 작업자 상태 확정
+    // 2. 작업자 상태 확정 (SSOT 표준 준수)
     transaction.update(workerRef, {
-      workStatus: targetWorkStatus,
+      workStatus: targetWorkerStatus,
       updatedAt: now
     });
 
