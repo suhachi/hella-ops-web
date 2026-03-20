@@ -21,7 +21,8 @@ const ReviewClosingSchema = z.object({
 type ReviewClosingInput = z.infer<typeof ReviewClosingSchema>;
 
 /**
- * 마감 보고 검토(승인/반려) 엔진 (2차 보완본)
+ * 마감 보고 검토(승인/반려) 엔진 (4차 최종 보완본)
+ * - Zero Trust: 모든 문서의 존재 여부(exists)를 명시적으로 가드
  */
 export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { success: boolean }> {
   
@@ -41,13 +42,14 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     return result;
   }
 
+  // 4. 문서 조회 및 존재성 전수 검증
   protected async performLookup(
     transaction: admin.firestore.Transaction,
     data: ReviewClosingInput
-  ): Promise<{ workerDoc: any; allWorkers: any[]; closingDoc: any }> {
+  ): Promise<{ workerDoc: any; allWorkers: any[]; closingDoc: any; scheduleDoc: any }> {
     const closingId = `${data.scheduleId}_${data.workerId}`;
-    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
-    const closingRef = FirestoreUtils.db.collection("schedule_closings").doc(closingId);
+    const workerRef = FirestoreUtils.scheduleWorker(closingId);
+    const closingRef = FirestoreUtils.scheduleClosing(closingId);
     const scheduleRef = FirestoreUtils.schedule(data.scheduleId);
     const scheduleWorkersRef = FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId);
     
@@ -58,6 +60,7 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
       transaction.get(scheduleWorkersRef)
     ]);
 
+    // Zero Trust: 명시적 존재 가드 (4차 보완 핵심)
     if (!closingSnap.exists) throw ErrorUtils.notFound("해당 마감 제출 문서를 찾을 수 없습니다.");
     if (!workerSnap.exists) throw ErrorUtils.notFound("관련 배정 내역을 찾을 수 없습니다.");
     if (!scheduleSnap.exists) throw ErrorUtils.notFound("상위 일정 정보를 찾을 수 없습니다.");
@@ -65,13 +68,24 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     return { 
       workerDoc: workerSnap.data(),
       closingDoc: closingSnap.data(),
+      scheduleDoc: scheduleSnap.data(),
       allWorkers: allWorkersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
     };
   }
 
+  // 5. 상태 전이 고차 검증
   protected validateTransition(docs: any): void {
-    if (docs.workerDoc.workStatus !== "SUBMITTED") {
-      throw ErrorUtils.invalidState(`검토 가능한 상태가 아닙니다. (현재: ${docs.workerDoc.workStatus})`);
+    const workStatus = docs.workerDoc.workStatus;
+    const closingStatus = docs.closingDoc.status;
+
+    // A. 중복 처리 차단 가드
+    if (closingStatus === "APPROVED" || closingStatus === "REJECTED") {
+      throw ErrorUtils.invalidState(`이미 검토가 완료된 마감 건입니다. (현재: ${closingStatus})`);
+    }
+
+    // B. 주 상태 정합성 확인
+    if (workStatus !== "SUBMITTED") {
+      throw ErrorUtils.invalidState(`검토 가능한 제출 상태가 아닙니다. (현재: ${workStatus})`);
     }
   }
 
@@ -81,8 +95,8 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     data: ReviewClosingInput
   ): Promise<{ success: boolean }> {
     const closingId = `${data.scheduleId}_${data.workerId}`;
-    const closingRef = FirestoreUtils.db.collection("schedule_closings").doc(closingId);
-    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
+    const closingRef = FirestoreUtils.scheduleClosing(closingId);
+    const workerRef = FirestoreUtils.scheduleWorker(closingId);
     const scheduleRef = FirestoreUtils.schedule(data.scheduleId);
     const now = TimestampUtils.now();
 
@@ -90,7 +104,7 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     const targetStatus = isApprove ? "APPROVED" : "REJECTED";
     const targetWorkStatus = isApprove ? "CLOSED" : "REJECTED";
 
-    // 1. 마감 전문 상태 확정 (schedule_closings)
+    // 1. 마감 전문 상태 및 검토 정보 서버 확정
     transaction.update(closingRef, {
       status: targetStatus,
       rejectReason: isApprove ? null : data.reason,
@@ -98,14 +112,13 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
       updatedAt: now
     });
 
-    // 2. 작업자 상태 확정 (schedule_workers)
+    // 2. 작업자 상태 확정
     transaction.update(workerRef, {
       workStatus: targetWorkStatus,
       updatedAt: now
     });
 
     // 3. 상위 일정 최종 종결 판정 (schedules)
-    // 이번 승인 건을 포함하여 모든 작업자가 CLOSED/CANCELLED 인지 확인
     if (isApprove) {
       const remainingOthers = docs.allWorkers.filter((w: any) => w.id !== closingId);
       const allDone = remainingOthers.every((w: any) => 

@@ -15,6 +15,9 @@ export const FirestoreUtils = {
   scheduleWorker(id: string) {
     return this.db.collection("schedule_workers").doc(id);
   },
+  scheduleClosing(id: string) {
+    return this.db.collection("schedule_closings").doc(id);
+  },
   equipment(id: string) {
     return this.db.collection("equipments").doc(id);
   }
