@@ -12,6 +12,15 @@
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, Zustand
 - **Backend**: Firebase (Auth, Firestore, Functions, Hosting)
 
+## 🎨 브랜드 자산 (Brand Assets)
+- **공식 로고**: `hella.png`
+- **참조 위치**: `public/hella.png` (Vite/React 정적 참조 대응)
+- **적용 예정 영역**:
+    - 로그인 화면 (`/login`)
+    - 관리자 대시보드 (`/admin/*`)
+    - 사원 모바일 웹 홈 (`/m/*`)
+    - 생성된 업무 기록 PDF 문서
+
 ## 📂 저장소 구조
 - `/docs`: 설계 및 명세 문서 (PDF 및 Markdown)
 - `firestore.rules`: 최적화된 보안 규칙 Helper 레이어
