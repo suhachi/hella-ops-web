@@ -67,16 +67,22 @@ export class CancelScheduleHandler extends BaseHandler<CancelScheduleInput, { su
       updatedAt: now
     });
 
-    // 2. 소속 모든 작업자 상태를 CANCELLED로 일괄 업데이트
+    // 2. 배정된 작업자 중 ASSIGNED, STARTED 상태인 경우만 CANCELLED로 변경
     const workersSnap = await transaction.get(
       FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId)
     );
 
     workersSnap.docs.forEach(doc => {
-      transaction.update(doc.ref, {
-        workStatus: "CANCELLED",
-        updatedAt: now
-      });
+      const workerData = doc.data();
+      const currentStatus = workerData.workStatus;
+      
+      // ASSIGNED 또는 STARTED 인 경우만 취소 처리 (ENDED, CLOSED 보존)
+      if (currentStatus === "ASSIGNED" || currentStatus === "STARTED") {
+        transaction.update(doc.ref, {
+          workStatus: "CANCELLED",
+          updatedAt: now
+        });
+      }
     });
 
     return { success: true };
