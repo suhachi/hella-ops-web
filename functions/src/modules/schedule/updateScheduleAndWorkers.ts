@@ -9,35 +9,50 @@ import { FirestoreUtils } from "../../shared/firestore";
 import { TimestampUtils } from "../../shared/timestamps";
 
 /**
- * 1. 타입 정의
+ * 1. 타입 정의 및 초정밀 검증
  */
 const UpdateScheduleSchema = z.object({
-  scheduleId: z.string(),
+  scheduleId: z.string().trim().min(1),
   updates: z.object({
-    siteName: z.string().optional(),
-    workerIds: z.array(z.string()).optional(),
-    startAt: z.string().optional(),
-    endAt: z.string().optional(),
-    notes: z.string().optional()
+    siteName: z.string().trim().min(1).optional(),
+    workerIds: z.array(z.string()).min(1).optional(),
+    startAt: z.string().datetime().optional(),
+    endAt: z.string().datetime().optional(),
+    notes: z.string().trim().optional()
   })
+}).refine((data) => {
+  if (data.updates.startAt && data.updates.endAt) {
+    return new Date(data.updates.startAt) < new Date(data.updates.endAt);
+  }
+  return true;
+}, {
+  message: "종료 시간은 시작 시간보다 늦어야 합니다.",
+  path: ["updates", "endAt"]
 });
 
 type UpdateScheduleInput = z.infer<typeof UpdateScheduleSchema>;
 
 /**
- * 일정 및 작업자 목록 수정 엔진 (차집합 처리)
+ * 일정 및 작업자 목록 수정 엔진 (차집합 처리 보완)
  */
 export class UpdateScheduleAndWorkersHandler extends BaseHandler<UpdateScheduleInput, { success: boolean }> {
   
   protected checkAuth(context: functions.https.CallableContext): void {
-    AuthUtils.requireAdmin(context);
+    AuthUtils.requireAuth(context);
+    const token = context.auth?.token as any;
+    if (token?.role !== "LEADER" && token?.role !== "ADMIN" && token?.role !== "SUPER_ADMIN") {
+      throw new functions.https.HttpsError("permission-denied", "일정 수정 권한이 없습니다.");
+    }
   }
 
   protected validateInput(data: any): UpdateScheduleInput {
-    return ValidatorUtils.parseSafe(UpdateScheduleSchema, data);
+    const validated = ValidatorUtils.parseSafe(UpdateScheduleSchema, data);
+    if (validated.updates.workerIds) {
+      validated.updates.workerIds = Array.from(new Set(validated.updates.workerIds));
+    }
+    return validated;
   }
 
-  // 4. 문서 조회 및 차집합 계산
   protected async performLookup(
     transaction: admin.firestore.Transaction,
     data: UpdateScheduleInput
@@ -51,16 +66,16 @@ export class UpdateScheduleAndWorkersHandler extends BaseHandler<UpdateScheduleI
     let toAdd: string[] = [];
     let toRemove: string[] = [];
 
-    const currentWorkerIds = (scheduleData?.workerIds || []) as string[];
-
     if (data.updates.workerIds) {
-      const currentWorkersSet = new Set(currentWorkerIds);
-      const newWorkersSet = new Set(data.updates.workerIds);
+      const currentWorkerIds = Array.isArray(scheduleData!.workerIds) ? (scheduleData!.workerIds as string[]) : [];
+      const newWorkerIds = data.updates.workerIds;
 
-      toAdd = data.updates.workerIds.filter(id => !currentWorkersSet.has(id));
-      toRemove = currentWorkerIds.filter(id => !newWorkersSet.has(id));
+      const currentSet = new Set(currentWorkerIds);
+      const newSet = new Set(newWorkerIds);
 
-      // 신규 사원 활성 상태 검증
+      toAdd = newWorkerIds.filter(id => !currentSet.has(id));
+      toRemove = currentWorkerIds.filter(id => !newSet.has(id));
+
       for (const id of toAdd) {
         const userSnap = await transaction.get(FirestoreUtils.user(id));
         if (!userSnap.exists || userSnap.data()?.isActive !== true) {
@@ -73,8 +88,10 @@ export class UpdateScheduleAndWorkersHandler extends BaseHandler<UpdateScheduleI
   }
 
   protected validateTransition(docs: any): void {
-    if (docs.scheduleData.status === "COMPLETED" || docs.scheduleData.status === "CANCELLED") {
-      throw ErrorUtils.invalidState("종료되었거나 취소된 일정은 수정할 수 없습니다.");
+    // SSOT: 종료되거나 취소된 일정 수정 금지
+    const status = docs.scheduleData.status;
+    if (status === "COMPLETED" || status === "CANCELLED") {
+      throw ErrorUtils.invalidState(`현재 상태(${status})에서는 일정을 수정할 수 없습니다.`);
     }
   }
 
@@ -86,25 +103,25 @@ export class UpdateScheduleAndWorkersHandler extends BaseHandler<UpdateScheduleI
     const scheduleRef = FirestoreUtils.schedule(data.scheduleId);
     const now = TimestampUtils.now();
 
-    // 1. 일정 정보 업데이트
+    // 1. 일정 마스터 업데이트
     transaction.update(scheduleRef, {
       ...data.updates,
       updatedAt: now
     });
 
-    // 2. 신규 사원 추가 (schedule_workers 생성)
+    // 2. 신규 배정 (ASSIGNED)
     for (const workerId of lookupResult.toAdd) {
       const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(`${data.scheduleId}_${workerId}`);
       transaction.set(workerRef, {
         scheduleId: data.scheduleId,
         workerId,
-        workStatus: "PENDING",
+        workStatus: "ASSIGNED", 
         createdAt: now,
         updatedAt: now
       });
     }
 
-    // 3. 제외된 사원 삭제 (물리 삭제 또는 CANCELLED 처리 선택 가능 - 여기서는 물리적 일관성을 위해 삭제 또는 상태변경)
+    // 3. 배정 제외 (물리 삭제로 동기화 유지)
     for (const workerId of lookupResult.toRemove) {
       const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(`${data.scheduleId}_${workerId}`);
       transaction.delete(workerRef);
