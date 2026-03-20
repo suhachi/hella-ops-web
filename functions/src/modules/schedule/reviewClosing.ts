@@ -21,11 +21,10 @@ const ReviewClosingSchema = z.object({
 type ReviewClosingInput = z.infer<typeof ReviewClosingSchema>;
 
 /**
- * 마감 보고 검토(승인/반려) 엔진
+ * 마감 보고 검토(승인/반려) 엔진 (2차 보완본)
  */
 export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { success: boolean }> {
   
-  // 2. 인증 가드 (관리자만 가능)
   protected checkAuth(context: functions.https.CallableContext): void {
     AuthUtils.requireAuth(context);
     const token = context.auth?.token as any;
@@ -45,15 +44,24 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
   protected async performLookup(
     transaction: admin.firestore.Transaction,
     data: ReviewClosingInput
-  ): Promise<{ workerDoc: any }> {
-    const workerDocId = `${data.scheduleId}_${data.workerId}`;
-    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(workerDocId);
-    const snap = await transaction.get(workerRef);
-    if (!snap.exists) throw ErrorUtils.notFound("해당 마감 제출 내역을 찾을 수 없습니다.");
-    return { workerDoc: snap.data() };
+  ): Promise<{ workerDoc: any; allWorkers: any[] }> {
+    const closingId = `${data.scheduleId}_${data.workerId}`;
+    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
+    const scheduleWorkersRef = FirestoreUtils.db.collection("schedule_workers").where("scheduleId", "==", data.scheduleId);
+    
+    const [workerSnap, allWorkersSnap] = await Promise.all([
+      transaction.get(workerRef),
+      transaction.get(scheduleWorkersRef)
+    ]);
+
+    if (!workerSnap.exists) throw ErrorUtils.notFound("해당 마감 배정 내역을 찾을 수 없습니다.");
+    
+    return { 
+      workerDoc: workerSnap.data(),
+      allWorkers: allWorkersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    };
   }
 
-  // 5. 상태 전이 검증 (SUBMITTED 상태일 때만 검토 가능)
   protected validateTransition(docs: any): void {
     if (docs.workerDoc.workStatus !== "SUBMITTED") {
       throw ErrorUtils.invalidState(`검토 가능한 상태가 아닙니다. (현재: ${docs.workerDoc.workStatus})`);
@@ -65,29 +73,45 @@ export class ReviewClosingHandler extends BaseHandler<ReviewClosingInput, { succ
     docs: any,
     data: ReviewClosingInput
   ): Promise<{ success: boolean }> {
-    const workerDocId = `${data.scheduleId}_${data.workerId}`;
-    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(workerDocId);
+    const closingId = `${data.scheduleId}_${data.workerId}`;
+    const closingRef = FirestoreUtils.db.collection("schedule_closings").doc(closingId);
+    const workerRef = FirestoreUtils.db.collection("schedule_workers").doc(closingId);
     const scheduleRef = FirestoreUtils.schedule(data.scheduleId);
     const now = TimestampUtils.now();
 
-    if (data.action === "APPROVE") {
-      // 1. 승인 시: CLOSED 상태로 확정
-      transaction.update(workerRef, {
-        workStatus: "CLOSED",
-        reviewedAt: now,
-        updatedAt: now
-      });
-      
-      // 2. 일정 상태 재확인 (필요 시 COMPLETED 유지)
-      // (일반적으로 recordWorkEnd에서 COMPLETED로 변경되지만, 마감 승인이 최종 종결 시그널)
-    } else {
-      // 3. 반려 시: REJECTED 상태로 변경
-      transaction.update(workerRef, {
-        workStatus: "REJECTED",
-        rejectReason: data.reason,
-        reviewedAt: now,
-        updatedAt: now
-      });
+    const isApprove = data.action === "APPROVE";
+    const targetStatus = isApprove ? "APPROVED" : "REJECTED";
+    const targetWorkStatus = isApprove ? "CLOSED" : "REJECTED";
+
+    // 1. 마감 전문 상태 확정 (schedule_closings)
+    transaction.update(closingRef, {
+      status: targetStatus,
+      rejectReason: isApprove ? null : data.reason,
+      reviewedAt: now,
+      updatedAt: now
+    });
+
+    // 2. 작업자 상태 확정 (schedule_workers)
+    transaction.update(workerRef, {
+      workStatus: targetWorkStatus,
+      updatedAt: now
+    });
+
+    // 3. 상위 일정 최종 종결 판정 (schedules)
+    // 이번 승인 건을 포함하여 모든 작업자가 CLOSED/CANCELLED 인지 확인
+    if (isApprove) {
+      const remainingOthers = docs.allWorkers.filter((w: any) => w.id !== closingId);
+      const allDone = remainingOthers.every((w: any) => 
+        w.workStatus === "CLOSED" || w.workStatus === "CANCELLED"
+      );
+
+      if (allDone) {
+        transaction.update(scheduleRef, {
+          status: "COMPLETED",
+          completedAt: now,
+          updatedAt: now
+        });
+      }
     }
 
     return { success: true };
