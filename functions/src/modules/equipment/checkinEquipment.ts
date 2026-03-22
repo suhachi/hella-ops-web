@@ -19,8 +19,8 @@ const CheckinEquipmentSchema = z.object({
 type CheckinEquipmentInput = z.infer<typeof CheckinEquipmentSchema>;
 
 /**
- * 장비 반납 엔진
- * - NFC 태그를 통한 장비 식별 및 상태 원복 (CHECKED_OUT -> AVAILABLE)
+ * 장비 반납 엔진 (F4 2차 보완)
+ * - Zero Trust: Firestore users 문서 기반 role/isActive 검증 (Claim 의존 제거)
  */
 export class CheckinEquipmentHandler extends BaseHandler<CheckinEquipmentInput, { success: boolean }> {
   
@@ -32,7 +32,7 @@ export class CheckinEquipmentHandler extends BaseHandler<CheckinEquipmentInput, 
     return ValidatorUtils.parseSafe(CheckinEquipmentSchema, data);
   }
 
-  // 4. 문서 조회 및 존재성 검증
+  // 4. 문서 조회 및 존재성 검증 (Zero Trust)
   protected async performLookup(
     transaction: admin.firestore.Transaction,
     data: CheckinEquipmentInput,
@@ -49,23 +49,31 @@ export class CheckinEquipmentHandler extends BaseHandler<CheckinEquipmentInput, 
 
     const { equipmentId } = mappingSnap.data() as any;
 
-    // 2. 장비 정보 조회
+    // 2. 장비 및 대출자 정보 조회
     const [equipmentSnap, userSnap] = await Promise.all([
       transaction.get(FirestoreUtils.equipment(equipmentId)),
       transaction.get(FirestoreUtils.user(actorId))
     ]);
 
-    if (!equipmentSnap.exists) throw ErrorUtils.notFound("존재하지 않는 장비입니다.");
+    if (!equipmentSnap.exists) throw ErrorUtils.notFound("장비 정보를 찾을 수 없습니다.");
     
+    // Zero Trust 가드: 활성 계정 여부 (2차 보완 핵심 반영)
+    const userData = userSnap.data() as any;
+    if (!userSnap.exists || userData?.isActive !== true) {
+      throw ErrorUtils.forbidden("비활성 계정은 장비를 반입할 수 없습니다.");
+    }
+
     return { equipmentSnap, userSnap };
   }
 
-  // 5. 권한 및 상태 전이 검증
+  // 5. 권한 및 상태 전이 검증 (Zero Trust 기반 role 판정)
   protected validateTransition(docs: any, data: CheckinEquipmentInput, context: functions.https.CallableContext): void {
     const equipment = docs.equipmentSnap.data() as any;
     const actorId = context.auth!.uid;
-    const token = context.auth?.token as any;
-    const isAdmin = token?.role === "ADMIN" || token?.role === "SUPER_ADMIN";
+    const userData = docs.userSnap.data() as any;
+    
+    // Zero Trust: 토큰이 아닌 Firestore 문서의 role 필드 사용
+    const isAdmin = userData?.role === "ADMIN" || userData?.role === "SUPER_ADMIN";
 
     // A. 상태 가드
     if (equipment.status !== "CHECKED_OUT") {
@@ -74,7 +82,7 @@ export class CheckinEquipmentHandler extends BaseHandler<CheckinEquipmentInput, 
 
     // B. 소지자 본인 확인 또는 관리자 대리 반납 가드
     if (equipment.currentHolderUserId !== actorId && !isAdmin) {
-      throw ErrorUtils.forbidden("타인이 소지 중인 장비는 반납할 수 없으며, 관리자만 대리 반납이 가능합니다.");
+      throw ErrorUtils.forbidden("타인이 소지 중인 장비는 본인만 반납하거나 관리자가 대리 반납해야 합니다.");
     }
   }
 

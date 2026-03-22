@@ -19,8 +19,9 @@ const CheckoutEquipmentSchema = z.object({
 type CheckoutEquipmentInput = z.infer<typeof CheckoutEquipmentSchema>;
 
 /**
- * 장비 반출(대출) 엔진
- * - NFC 태그를 통한 장비 식별 및 상태 전이 (AVAILABLE -> CHECKED_OUT)
+ * 장비 반출 엔진 (F4 2차 보완)
+ * - Zero Trust: Firestore users 문서의 isActive 필드로 활성 여부 검증
+ * - 정책: 오직 본인 반출만 허용 (SSOT 고정)
  */
 export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput, { success: boolean }> {
   
@@ -41,7 +42,6 @@ export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput
     const actorId = context.auth!.uid;
     const mappingRef = FirestoreUtils.nfcMapping(data.nfcTagId);
     
-    // 1. 태그 매핑 조회
     const mappingSnap = await transaction.get(mappingRef);
     if (!mappingSnap.exists) {
       throw ErrorUtils.notFound("등록되지 않은 NFC 태그입니다.");
@@ -52,15 +52,15 @@ export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput
       throw ErrorUtils.invalidState("태그에 연결된 장비 정보가 없습니다.");
     }
 
-    // 2. 장비 및 대출자(본인) 정보 조회
+    // 2. 장비 및 사용자 정보 조회 (Zero Trust 기반 읽기)
     const [equipmentSnap, userSnap] = await Promise.all([
       transaction.get(FirestoreUtils.equipment(equipmentId)),
       transaction.get(FirestoreUtils.user(actorId))
     ]);
 
-    if (!equipmentSnap.exists) throw ErrorUtils.notFound("존재하지 않는 장비입니다.");
+    if (!equipmentSnap.exists) throw ErrorUtils.notFound("장비 정보를 찾을 수 없습니다.");
     
-    // 비활성 사용자 체크
+    // Zero Trust 검증: 토큰이 아닌 DB 문서 기준
     const userData = userSnap.data() as any;
     if (!userSnap.exists || userData?.isActive !== true) {
       throw ErrorUtils.forbidden("비활성 계정은 장비를 반출할 수 없습니다.");
@@ -69,17 +69,17 @@ export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput
     return { mappingSnap, equipmentSnap, userSnap };
   }
 
-  // 5. 상태 전이 검증 (AVAILABLE 여부 등)
-  protected validateTransition(docs: { equipmentSnap: admin.firestore.DocumentSnapshot }): void {
+  // 5. 상태 전이 검증
+  protected validateTransition(docs: any): void {
     const equipment = docs.equipmentSnap.data() as any;
     
-    // Zero Trust: 서버가 최종 상태를 검증
+    // 상태 가드: AVAILABLE 일 때만 반출 가능
     if (equipment.status !== "AVAILABLE") {
       throw ErrorUtils.invalidState(`이 장비는 현재 반출 가능한 상태가 아닙니다. (현재: ${equipment.status})`);
     }
   }
 
-  // 6. 트랜잭션 (상태 변경 및 로그 기록 원자적 처리)
+  // 6. 트랜잭션 (원자적 처리)
   protected async performTransaction(
     transaction: admin.firestore.Transaction,
     docs: any,
@@ -92,7 +92,7 @@ export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput
     const equipmentData = docs.equipmentSnap.data() as any;
     const now = TimestampUtils.now();
 
-    // A. 장비 상태 변경
+    // A. 장비 상태 변경 (본인 반출 정책 고정)
     transaction.update(docs.equipmentSnap.ref, {
       status: "CHECKED_OUT",
       currentHolderUserId: actorId,
@@ -101,7 +101,7 @@ export class CheckoutEquipmentHandler extends BaseHandler<CheckoutEquipmentInput
       updatedAt: now
     });
 
-    // B. 장비 로그 기록 (Append-only)
+    // B. 장비 로그 기록
     const logRef = FirestoreUtils.equipmentLogs().doc();
     transaction.set(logRef, {
       equipmentId,

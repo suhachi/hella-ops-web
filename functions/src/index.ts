@@ -31,3 +31,8 @@ export * from "./modules/schedule/recordWorkEnd";
 // Module Exports: Closing (F3)
 export * from "./modules/schedule/submitClosing";
 export * from "./modules/schedule/reviewClosing";
+
+// [PHASE F: STEP F4] 장비/NFC 엔진
+export * from "./modules/equipment/checkoutEquipment";
+export * from "./modules/equipment/checkinEquipment";
+export * from "./modules/equipment/registerNfcTag";
