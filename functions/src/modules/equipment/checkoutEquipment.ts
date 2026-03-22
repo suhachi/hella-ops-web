@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import * as z from "zod";
 import { BaseHandler } from "../../shared/baseHandler";
 import { AuthUtils } from "../../shared/auth";
-import { ValidatorUtils } from "../../shared/validator";
+import { ValidatorUtils } from "../../shared/validators";
 import { FirestoreUtils } from "../../shared/firestore";
 import { ErrorUtils } from "../../shared/errors";
 import { TimestampUtils } from "../../shared/timestamps";
