@@ -20,5 +20,11 @@ export const FirestoreUtils = {
   },
   equipment(id: string) {
     return this.db.collection("equipments").doc(id);
+  },
+  nfcMapping(tagId: string) {
+    return this.db.collection("nfc_tag_mappings").doc(tagId);
+  },
+  equipmentLogs() {
+    return this.db.collection("equipment_logs");
   }
 };
