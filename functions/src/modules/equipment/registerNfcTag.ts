@@ -52,24 +52,25 @@ export class RegisterNfcTagHandler extends BaseHandler<RegisterNfcTagInput, { su
       transaction.get(userRef)
     ]);
 
-    // A. 관리자 권한 및 활성 계정 검증 (Zero Trust)
-    const userData = userSnap.data() as any;
+    return { equipmentSnap, userSnap, existingMappingSnap };
+  }
+
+  // 5. 권한 및 상태 전이 검증 (Zero Trust 기반)
+  protected validateTransition(docs: any, data: RegisterNfcTagInput): void {
+    const userData = docs.userSnap.data() as any;
     const isAdmin = userData?.role === "ADMIN" || userData?.role === "SUPER_ADMIN";
-    if (!userSnap.exists || userData?.isActive !== true || !isAdmin) {
+
+    // A. 관리자 권한 및 활성 계정 검증 (Zero Trust)
+    if (!docs.userSnap.exists || userData?.isActive !== true || !isAdmin) {
       throw ErrorUtils.forbidden("관리자만 NFC 태그를 등록할 수 있습니다.");
     }
 
     // B. 연결 대상 장비 존재 여부 검증 (핵심 검증 4-4)
-    if (!equipmentSnap.exists) {
+    if (!docs.equipmentSnap.exists) {
       throw ErrorUtils.notFound("등록하려는 장비가 존재하지 않습니다. (존재하지 않는 장비 연결 차단)");
     }
-    
-    return { equipmentSnap, userSnap, existingMappingSnap };
-  }
 
-  // 5. 중복 등록 가드
-  protected validateTransition(docs: { existingMappingSnap: admin.firestore.DocumentSnapshot }): void {
-    // 핵심 검증 4-2, 4-3: 태그 중복 및 재등록 차단
+    // C. 핵심 검증 4-2, 4-3: 태그 중복 및 재등록 차단
     if (docs.existingMappingSnap.exists) {
       throw ErrorUtils.invalidInput("이미 다른 장비에 등록되었거나 중복된 NFC 태그입니다.");
     }

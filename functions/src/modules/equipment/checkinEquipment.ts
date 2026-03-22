@@ -67,10 +67,10 @@ export class CheckinEquipmentHandler extends BaseHandler<CheckinEquipmentInput, 
   }
 
   // 5. 권한 및 상태 전이 검증 (Zero Trust 기반 role 판정)
-  protected validateTransition(docs: any, data: CheckinEquipmentInput, context: functions.https.CallableContext): void {
+  protected validateTransition(docs: any, data: CheckinEquipmentInput): void {
     const equipment = docs.equipmentSnap.data() as any;
-    const actorId = context.auth!.uid;
     const userData = docs.userSnap.data() as any;
+    const actorId = docs.userSnap.id; // performLookup에서 가져온 본인 ID
     
     // Zero Trust: 토큰이 아닌 Firestore 문서의 role 필드 사용
     const isAdmin = userData?.role === "ADMIN" || userData?.role === "SUPER_ADMIN";
