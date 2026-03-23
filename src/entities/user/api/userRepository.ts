@@ -1,5 +1,5 @@
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../shared/lib/firebase';
+import { db } from '@/shared/lib/firebase';
 import { UserProfile } from '../model/types';
 
 export const userRepository = {

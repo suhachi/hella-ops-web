@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '../entities/user/model/useAuth';
+import { useAuth } from '@/entities/user/model/useAuth';
 
 const App: React.FC = () => {
   const { user, isLoading } = useAuth();
