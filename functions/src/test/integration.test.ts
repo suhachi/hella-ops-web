@@ -1,7 +1,8 @@
 /**
- * STEP F5: 전 범위 통합 테스트 시나리오 (integration.test.ts)
- * - 이 파일은 STEP F5의 무결성 증명을 위해 작성된 테스트 스크립트입니다.
- * - 주요 범주: 계정/권한, 일정, 현장, 마감, 장비, 로그
+ * STEP F5: emulator-only 통합 테스트 시나리오 (integration.test.ts)
+ * 
+ * [주의] 본 테스트는 실제 Firebase 프로젝트 생성 전 로컬 개발 환경에서의 정합성 검증을 위한 시뮬레이션 스크립트입니다.
+ * - 실제 클라우드 환경과의 실연동 여부는 PHASE U(실제 프로젝트 생성 단계)에서 검증이 필요합니다.
  */
 
 import * as admin from "firebase-admin";
