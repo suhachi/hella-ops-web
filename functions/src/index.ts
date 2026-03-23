@@ -36,3 +36,6 @@ export * from "./modules/schedule/reviewClosing";
 export * from "./modules/equipment/checkoutEquipment";
 export * from "./modules/equipment/checkinEquipment";
 export * from "./modules/equipment/registerNfcTag";
+
+// [PHASE F: STEP F5] 통합 테스트 및 운영 보조
+export * from "./modules/system/opsUtils";
