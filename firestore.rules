@@ -119,7 +119,7 @@ service cloud.firestore {
     match /schedule_photos/{photoId} {
       allow read: if isActiveUser(); 
       allow create: if isActiveUser() && isSelfDocumentUser(request.resource.data.uploaderId)
-                    && hasOnlyKeys(['scheduleId', 'uploaderId', 'photoType', 'title', 'storagePath', 'fileName', 'fileSize', 'uploadedAt', 'createdAt']);
+                    && hasOnlyKeys(['scheduleId', 'uploaderId', 'photoType', 'title', 'storagePath', 'fileName', 'fileSize', 'uploadStatus', 'uploadedAt', 'createdAt']);
       allow update: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.uploaderId) && changedOnly(['title', 'updatedAt']));
       allow delete: if isAdminLevel() || (isActiveUser() && isSelfDocumentUser(resource.data.uploaderId));
     }
