@@ -7,7 +7,9 @@ export interface UserProfile {
   photoURL: string | null;
   role: UserRole;
   isActive: boolean;
-  phoneNumber?: string;
+  phoneNumber?: string | null;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface AuthState {
