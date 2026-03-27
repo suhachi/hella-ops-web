@@ -1,0 +1,11 @@
+{"users": [
+{
+  "localId": "7MfYm88cB6M9VKXOUW4Px27baf52",
+  "email": "admin@hellaops.com",
+  "emailVerified": false,
+  "passwordHash": "Rcw7OBYyo5defHEvtozUvVB9gVieVoyU1do0jlW1tHrHIzr1HA8GpEt/9AaMRbQKbedkrciJsvord2+TSX52Fw==",
+  "salt": "AEJvDk40cu9F5g==",
+  "createdAt": "1774346955458",
+  "disabled": false,
+  "providerUserInfo": []
+}]}

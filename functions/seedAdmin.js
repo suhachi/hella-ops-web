@@ -1,65 +1,63 @@
 const admin = require('firebase-admin');
 
 // 1. 초기화
-try {
+if (admin.apps.length === 0) {
   admin.initializeApp({
     projectId: 'hella-ops'
   });
-  console.log('[SEED] Firebase Admin 초기화 완료 (hella-ops)');
-} catch (e) {
-  // 이미 초기화된 경우 무시
 }
 
 const db = admin.firestore();
-const auth = admin.auth();
 
-const SEED_EMAIL = 'eehowon9927@naver.com';
+// 시딩 대상 목록 (실제 확인된 UID 반영)
+const SEED_TARGETS = [
+  { 
+    uid: '7MfYm88cB6M9VKXOUW4Px27baf52', 
+    email: 'admin@hellaops.com', 
+    label: '클라이언트 운영용' 
+  },
+  { 
+    uid: 'DEV_UID_HERE', // 사용자 가입 후 UID 기입 필요
+    email: 'eehowon9927@naver.com', 
+    label: '개발자 점검용' 
+  }
+];
 
-async function seedAdmin() {
-  console.log(`[SEED] 시작: ${SEED_EMAIL} 를 SUPER_ADMIN으로 등록 시도합니다.`);
+async function seedWithVerifiedUid() {
+  console.log(`[SEED] 시작: 총 ${SEED_TARGETS.length}개 대상 시딩 시도`);
 
-  try {
-    // 2. Auth에서 사용자 검색
-    const userRecord = await auth.getUserByEmail(SEED_EMAIL);
-    const uid = userRecord.uid;
-    console.log(`[SEED] Auth 사용자 확인 완료: UID = ${uid}`);
-
-    // 3. Firestore users 문서 경로 확인
-    const userRef = db.collection('users').doc(uid);
-    const docSnap = await userRef.get();
-
-    // 4. 데이터 준비
-    const now = admin.firestore.Timestamp.now();
-    const adminData = {
-      email: SEED_EMAIL,
-      displayName: userRecord.displayName || '최고관리자',
-      photoURL: userRecord.photoURL || null,
-      role: 'SUPER_ADMIN',
-      isActive: true,
-      updatedAt: now,
-      lastLoginAt: now
-    };
-
-    if (!docSnap.exists) {
-      adminData.createdAt = now;
-      console.log('[SEED] 새로운 사용자로 생성합니다.');
-    } else {
-      console.log('[SEED] 기존 사용자의 정보를 업데이트합니다.');
+  for (const target of SEED_TARGETS) {
+    if (!target.uid || target.uid === 'DEV_UID_HERE') {
+      console.log(`\n[WAIT] ${target.label} (${target.email}): Auth 사용자 미확인. 가입 후 진행 가능.`);
+      continue;
     }
 
-    // 5. 실제 쓰기
-    await userRef.set(adminData, { merge: true });
-    console.log(`[SEED] 최종 성공: UID(${uid}) 문서가 SUPER_ADMIN으로 활성화되었습니다.`);
+    console.log(`\n--- [계정: ${target.label} - ${target.email}] ---`);
+    
+    try {
+      const userRef = db.collection('users').doc(target.uid);
+      const docSnap = await userRef.get();
+      const now = admin.firestore.Timestamp.now();
 
-  } catch (error) {
-    if (error.code === 'auth/user-not-found') {
-      console.error(`[SEED] 실패: ${SEED_EMAIL} 를 Auth에서 찾을 수 없습니다.`);
-      console.log('>>> 조치사항: 실제 Firebase Console > Auth 메뉴에서 해당 이메일을 먼저 가입시키거나, 사용자가 직접 해당 이메일로 가입한 후 이 스크립트를 다시 실행해야 합니다.');
-    } else {
-      console.error('[SEED] 알 수 없는 오류:', error.message);
+      const adminData = {
+        email: target.email,
+        displayName: target.label.includes('클라이언트') ? '최고관리자(운영)' : '개발자(점검)',
+        role: 'SUPER_ADMIN',
+        isActive: true, // 사후 비활성화 가능
+        updatedAt: now,
+      };
+
+      if (!docSnap.exists) {
+        adminData.createdAt = now;
+      }
+
+      await userRef.set(adminData, { merge: true });
+      console.log(`[SEED] 성공: UID(${target.uid}) 문서가 SUPER_ADMIN으로 등록되었습니다.`);
+
+    } catch (error) {
+      console.error(`[SEED] 오류:`, error.message);
     }
-    process.exit(1);
   }
 }
 
-seedAdmin();
+seedWithVerifiedUid();
